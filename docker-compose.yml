@@ -1,0 +1,258 @@
+services:
+  nginx:
+    container_name: nginx
+    hostname: nginx
+    image: nginx:1.27.2-alpine
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d
+      - ./nginx/html:/usr/share/nginx/html
+      - ./nginx/includes/:/etc/nginx/includes/
+      # - ./nginx/log/:/var/log/nginx/
+      - ./nginx/certbot/options-ssl-nginx.conf:/etc/letsencrypt/options-ssl-nginx.conf
+      - ./nginx/certbot/ssl-dhparams.pem:/etc/letsencrypt/ssl-dhparams.pem
+      - ./nexus/ssl/key-nexus-privada.key:/etc/letsencrypt/live/nexus.local/key-nexus-privada.key
+      - ./nexus/ssl/certificado-nexus.crt:/etc/letsencrypt/live/nexus.local/certificado-nexus.crt
+      - ./jenkins/ssl/certificado-jenkins.crt:/etc/letsencrypt/live/jenkins.local/certificado-jenkins.crt
+      - ./jenkins/ssl/key-jenkins-privada.key:/etc/letsencrypt/live/jenkins.local/key-jenkins-privada.key
+      - ./sonar/ssl/key-sonar-privada.key:/etc/letsencrypt/live/sonar.local/key-sonar-privada.key
+      - ./sonar/ssl/certificado-sonar.crt:/etc/letsencrypt/live/sonar.local/certificado-sonar.crt
+      - ./rancher/ssl/key-rancher-privada.key:/etc/letsencrypt/live/rancher.local/key-rancher-privada.key
+      - ./rancher/ssl/certificado-rancher.crt:/etc/letsencrypt/live/rancher.local/certificado-rancher.crt
+      - ./grafana/etc/grafana/grafana.key:/etc/letsencrypt/live/grafana.local/grafana.key
+      - ./grafana/etc/grafana/grafana.crt:/etc/letsencrypt/live/grafana.local/grafana.crt
+    networks:
+      - projeto-devops-network
+    depends_on:
+      - sonarqube
+      - jenkins
+      - nexus
+      - k3s
+      - rancher
+      - k3s-cluster
+  jenkins:
+    build:
+      context: .
+      dockerfile: ./jenkins/Dockerfile
+    image: local/jenkins:latest
+    container_name: jenkins-local
+    hostname: jenkins
+    restart: unless-stopped
+    privileged: true
+    user: root
+    # ports:
+    #   - 9043:8443
+    # - 50000:50000
+    environment:
+      JENKINS_OPTS: "-Xmx2048m --httpPort=8080 --httpsPort=8443 --httpsKeyStore=/var/ssl/keystore.jks --httpsKeyStorePassword=123456"
+      JENKINS_HTTPS_KEYSTORE: "/var/ssl/keystore.jks"
+      JENKINS_HTTPS_KEYSTORE_PASSWORD: "123456" # senha-em-texto-não criptografado-para-armazenamento-de-chaves
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./jenkins/ssl:/var/ssl
+    networks:
+      - projeto-devops-network
+    depends_on:
+      - sonarqube
+  sonarqube:
+    build:
+      context: .
+      dockerfile: ./sonar/Dockerfile
+    image: local/sonarqube:latest
+    container_name: sonar-local
+    hostname: sonar
+    restart: unless-stopped
+    user: 1000:1000
+    depends_on:
+      - db
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    # ports:
+      # - "9000:9000"
+    networks:
+      - projeto-devops-network
+      - sonar-db-network
+  db:
+    image: postgres:12.20-alpine3.20
+    container_name: postegres-sonar-local
+    hostname: postegres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+    volumes:
+      - postgresql:/var/lib/postgresql
+      - postgresql_data:/var/lib/postgresql/data
+    networks:
+      - sonar-db-network
+  nexus:
+    image: sonatype/nexus3:3.73.0-java17-alpine
+    container_name: nexus-local
+    hostname: nexus
+    restart: unless-stopped
+    privileged: true
+    user: root
+    ports:
+      - "8123:8123"
+      # - "9143:8094"
+    volumes:
+      - nexus-data:/nexus-data
+      - ./nexus/ssl:/nexus-data/etc/ssl
+      - ./nexus/etc/nexus.properties:/nexus-data/etc/nexus.properties
+      - ./nexus/jetty/jetty-https.xml:/opt/sonatype/nexus/etc/jetty/jetty-https.xml
+    environment:
+      NEXUS_SECURITY_RANDOMPASSWORD: false  # Desabilitar senha aleatória na inicialização
+      INSTALL4J_ADD_VM_PARAMS: "-Xms2703m -Xmx2703m -XX:MaxDirectMemorySize=2703m"
+    networks:
+      - projeto-devops-network
+    depends_on:
+      - sonarqube
+      - jenkins
+  k3s: # Será um agente do rancher
+    image: rancher/k3s:v1.31.2-k3s1
+    container_name: k3s-local
+    hostname: k3s
+    restart: unless-stopped
+    privileged: true
+    user: root
+    environment:
+      - K3S_KUBECONFIG_OUTPUT=/output/kubeconfig.yaml
+      - K3S_KUBECONFIG_MODE=644
+      - K3S_NODE_NAME=k3s-node
+      - K3S_URL=https://172.18.0.7:6443
+      - K3S_TOKEN=K10d96373e8787b584621199368feaf903897e1ae36146ea3160701bc053bd5a730::server:5171807aeebfea617047bbb2e8366fa6
+    volumes:
+      - k3s-data:/var/lib/rancher/k3s
+      - k3s-config:/etc/rancher/k3s
+      - ./k3s/output:/output
+      - ./k3s/registries/registries.yaml:/etc/rancher/k3s/registries.yaml
+    # ports:
+      # - "8443:6443"  # Porta padrão de API do Kubernetes
+      #- "9280:80"    # Exemplo de porta para expor serviços
+      #- "9243:443"   # Exemplo de porta HTTPS para expor serviços
+    command:
+      - server
+      - --cluster-init
+      - --tls-san=rancher,local-node # Criado no rancher do outro container
+    networks:
+      - projeto-devops-network
+    depends_on:
+      - sonarqube
+      - jenkins
+      - nexus
+  rancher:
+    image: rancher/rancher:v2.9-head
+    container_name: rancher-local
+    hostname: rancher
+    restart: unless-stopped
+    privileged: true
+    user: root
+    # ports:
+    #   - "9380:80"
+    #   - "9343:443"
+    networks:
+      - projeto-devops-network
+    volumes:
+      - rancher-data:/var/lib/rancher
+      - ./k3s/project:/opt/project
+      - ./k3s/registries/registries.yaml:/etc/rancher/k3s/registries.yaml
+    depends_on:
+      - sonarqube
+      - jenkins
+      - nexus
+      - k3s
+  k3s-cluster: # Será um agente do rancher
+    image: rancher/k3s:v1.31.2-k3s1
+    container_name: k3s-cluster-local
+    hostname: k3s-cluster
+    restart: unless-stopped
+    privileged: true
+    user: root
+    environment:
+      - K3S_KUBECONFIG_OUTPUT=/output/kubeconfig.yaml
+      - K3S_KUBECONFIG_MODE=644
+      - K3S_NODE_NAME=k3s-cluster
+    volumes:
+      - k3s-cluster-data:/var/lib/rancher/k3s
+      - k3s-cluster-config:/etc/rancher/k3s
+      - ./k3s/output-cluster:/output
+      - ./k3s/yaml:/opt/yaml
+      - ./k3s/registries/registries.yaml:/etc/rancher/k3s/registries.yaml
+    # ports:
+    #   - "9443:6443"  # Porta padrão de API do Kubernetes
+    #   - "9480:80"    # Exemplo de porta para expor serviços
+    #   - "9443:443"   # Exemplo de porta HTTPS para expor serviços
+    command:
+      - server
+      - --cluster-init
+    networks:
+      - projeto-devops-network
+    depends_on:
+      - sonarqube
+      - jenkins
+      - nexus
+  prometheus:
+    image: bitnami/prometheus:latest
+    container_name: prometheus-local
+    hostname: prometheus
+    restart: unless-stopped
+    privileged: true
+    user: root
+    volumes:
+      - prometheus-data:/opt/bitnami/prometheus/data
+      - ./prometheus/prometheus.yml:/opt/bitnami/prometheus/conf/prometheus.yml
+    # ports:
+      # - "9091:9090"
+    networks:
+      - projeto-devops-network
+    depends_on:
+      - sonarqube
+      - jenkins
+      - nexus
+      - rancher
+  grafana:
+    image: grafana/grafana-enterprise
+    container_name: grafana
+    restart: unless-stopped
+    privileged: true
+    user: root
+    # ports:
+    #   - '3000:3000'
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./grafana/etc/grafana/grafana.ini:/usr/local/etc/grafana/grafana.ini
+      - ./grafana/etc/grafana/grafana.key:/etc/grafana/grafana.key
+      - ./grafana/etc/grafana/grafana.crt:/etc/grafana/grafana.crt
+    networks:
+      - projeto-devops-network
+    depends_on:
+      - prometheus
+volumes:
+  jenkins_home:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+  postgresql:
+  postgresql_data:
+  nexus-data:
+  k3s-data:
+  k3s-config:
+  rancher-data:
+  k3s-cluster-data:
+  k3s-cluster-config:
+  prometheus-data:
+  grafana-storage:
+
+networks:
+  sonar-db-network:
+  projeto-devops-network:

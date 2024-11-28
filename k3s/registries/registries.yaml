@@ -1,0 +1,11 @@
+mirrors:
+  docker.io:
+    endpoint:
+      - https://nexus:8123
+configs:
+  "nexus:8123":
+    auth:
+      username: jenkins
+      password: jenkins123
+    tls:
+      insecure_skip_verify: true

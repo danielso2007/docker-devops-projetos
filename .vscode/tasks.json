@@ -1,0 +1,42 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Remover container",
+            "type": "shell",
+            "command": "./remove.sh"
+        },
+        {
+            "label": "Parar container",
+            "type": "shell",
+            "command": "./stop.sh"
+        },
+        {
+            "label": "Iniciar container",
+            "type": "shell",
+            "command": "./start.sh"
+        },
+        {
+            "label": "Obter senha do rancher",
+            "type": "shell",
+            "command": "./obter-senha-inicial-rancher.sh"
+        },
+        {
+            "label": "Adiconar nó K3s",
+            "type": "shell",
+            "command": "./novo-k3s-refazer-token.sh"
+        },
+        {
+            "label": "Criar certificados",
+            "type": "shell",
+            "command": "./criar-certificados.sh"
+        },
+        {
+            "label": "Reiniciar nginx",
+            "type": "shell",
+            "command": "docker compose restart nginx && docker compose logs nginx -f"
+        }
+    ]
+}
